@@ -19,13 +19,16 @@ A simple (unofficial) command-line interface for managing your BearBlog posts. C
    ```bash
    pip install -r requirements.txt
    ```
-3. Configure your BearBlog credentials by creating a `.bearblog` file in the project root:
+3. Configure your BearBlog credentials by creating a `.bearblog` file in the project root (or `~/.config/bearblog/config.ini`):
    ```bash
    EMAIL=your-email@example.com
    PASSWORD=your_password
    BLOG_NAME=your-subdomain
+   USER_AGENT=YourBotName
    ```
    You can find your blog name in your BearBlog dashboard URL (e.g., `https://bearblog.dev/your-subdomain`).
+
+   `USER_AGENT` must be set to a string whitelisted by the BearBlog server admin to bypass Cloudflare.
 
 ## Usage
 
@@ -36,7 +39,7 @@ BearBlog CLI (Free Plan)
 
 Examples:
   bearcli list
-  bearcli new "My Post Title" --file post.md
+  bearcli new --file post.md
   bearcli load abc123xyz
   bearcli delete abc123xyz
 
@@ -72,16 +75,18 @@ Output:
 ### Create a new post
 
 ```bash
-python bearcli.py new "Post Title" --file post.md
+python bearcli.py new --file post.md
 ```
 
-The markdown file should contain the full post content. Front matter is optional—if omitted, the title and current date will be added automatically.
+The markdown file must begin with a YAML frontmatter block. The title, meta_description, published_date, and tags fields are read from the frontmatter and submitted to the blog automatically.
 
 Example `post.md`:
 ```markdown
 ---
 title: My Post Title
-date: 2026-02-22
+meta_description: A short description for search engines
+published_date: 2026-02-22
+tags: recreation
 ---
 
 This is the content of my blog post.
@@ -107,7 +112,7 @@ The post will be permanently deleted. Use with caution.
 
 Create a new post from a file:
 ```bash
-python bearcli.py new "My NES Gaming Setup" --file nes-setup.md
+python bearcli.py new --file nes-setup.md
 ```
 
 List all posts:

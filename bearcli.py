@@ -2,11 +2,15 @@
 import argparse
 import json
 import os
+import sys
 import requests
+import frontmatter
 from bs4 import BeautifulSoup
+# A command line front end to BearBlog.
+# Modifed to use my whitelisted user-agent string.
 
 # Config paths
-CONFIG_PATH_HOME = os.path.expanduser("~/.bearblog")
+CONFIG_PATH_HOME = os.path.expanduser("~/.config/bearblog/config.ini")
 SESSION_PATH = os.path.expanduser("~/.bearblog_session")
 
 
@@ -26,7 +30,9 @@ def load_config():
     email = None
     password = None
     blog_name = None
+    user_agent = None
 
+    print (f"Reading config from {config_path}")
     with open(config_path, "r") as f:
         for line in f:
             if line.startswith("EMAIL="):
@@ -35,12 +41,16 @@ def load_config():
                 password = line.split("=", 1)[1].strip()
             if line.startswith("BLOG_NAME="):
                 blog_name = line.split("=", 1)[1].strip()
+            if line.startswith("USER_AGENT="):
+                user_agent = line.split("=", 1)[1].strip()
 
     if not email or not password or not blog_name:
         raise RuntimeError("Config missing EMAIL, PASSWORD, or BLOG_NAME")
+    if not user_agent:
+        raise RuntimeError("Config missing USER_AGENT")
 
     blog_url = f"https://bearblog.dev/{blog_name}"
-    return email, password, blog_url
+    return email, password, blog_url, user_agent
 
 
 def extract_csrf(html):
@@ -51,7 +61,7 @@ def extract_csrf(html):
 
 def get_session():
     session = requests.Session()
-    email, password, blog_url = load_config()
+    email, password, blog_url, user_agent = load_config()
 
     # Load existing cookie
     if os.path.exists(SESSION_PATH):
@@ -60,11 +70,7 @@ def get_session():
             session.cookies.set("session", cookie, domain="bearblog.dev")
 
     session.headers.update({
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/122.0.0.0 Safari/537.36"
-        ),
+        "User-Agent": user_agent,
         "Accept": (
             "text/html,application/xhtml+xml,application/xml;"
             "q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,"
@@ -138,7 +144,7 @@ def get_session():
 # -----------------------------
 def cmd_list(args):
     session = get_session()
-    email, password, blog_url = load_config()
+    email, password, blog_url, user_agent = load_config()
 
     r = session.get(f"{blog_url}/dashboard/posts")
     soup = BeautifulSoup(r.text, "html.parser")
@@ -166,20 +172,51 @@ def cmd_list(args):
     print(json.dumps(posts, indent=2))
 
 
+def load_post(filepath):
+    from datetime import datetime
+    from pathlib import Path
+    p = Path(filepath)
+    raw = p.read_text(encoding="utf-8")
+
+    if not raw.startswith("---"):
+        print(f"Error: '{p.name}' has no opening '---' frontmatter delimiter.")
+        print("File must begin with '---' followed by YAML fields (title, meta_description, etc.).")
+        sys.exit(1)
+
+    post = frontmatter.loads(raw)
+    metadata = dict(post.metadata)
+    content = post.content
+
+    if not metadata.get("title"):
+        metadata["title"] = p.stem.replace("-", " ").replace("_", " ").title()
+
+    if isinstance(metadata.get("published_date"), datetime):
+        metadata["published_date"] = metadata["published_date"].strftime("%Y-%m-%dT%H:%M:%S+00:00")
+
+    if isinstance(metadata.get("tags"), list):
+        metadata["tags"] = ", ".join(metadata["tags"])
+
+    return metadata, content
+
+
+def build_header_content(metadata):
+    fields = ["title", "meta_description", "published_date", "tags"]
+    lines = []
+    for field in fields:
+        value = metadata.get(field, "")
+        lines.append(f"{field}:{value}")
+    return "\r\n".join(lines)
+
+
 # -----------------------------
 # NEW POST
 # -----------------------------
 def cmd_new(args):
     session = get_session()
-    email, password, blog_url = load_config()
+    email, password, blog_url, user_agent = load_config()
 
-    # Read file content safely
-    try:
-        with open(args.file, "r", encoding="utf-8") as f:
-            content = f.read()
-    except UnicodeDecodeError:
-        with open(args.file, "r", encoding="utf-8-sig") as f:
-            content = f.read()
+    metadata, body_content = load_post(args.file)
+    header_content = build_header_content(metadata)
 
     # --- Load the "new post" page to get CSRF ---
     new_post_url = f"{blog_url}/dashboard/posts/new/"
@@ -196,9 +233,9 @@ def cmd_new(args):
     # --- Build correct payload ---
     payload = {
         "csrfmiddlewaretoken": csrf,
-        "publish": "true",  # auto-publish
-        "header_content": f"title: {args.title}",
-        "body_content": content
+        "publish": "true",
+        "header_content": header_content,
+        "body_content": body_content
     }
 
     # --- Submit the form (POST /new/) ---
@@ -225,7 +262,7 @@ def cmd_new(args):
 # -----------------------------
 def cmd_update(args):
     session = get_session()
-    email, password, blog_url = load_config()
+    email, password, blog_url, user_agent = load_config()
 
     # Read new body content
     with open(args.file, "r", encoding="utf-8") as f:
@@ -269,7 +306,7 @@ def cmd_update(args):
 # -----------------------------
 def cmd_delete(args):
     session = get_session()
-    email, password, blog_url = load_config()
+    email, password, blog_url, user_agent = load_config()
 
     post_id = args.id
 
@@ -307,7 +344,7 @@ def cmd_delete(args):
 # -----------------------------
 def cmd_publish(args):
     session = get_session()
-    email, password, blog_url = load_config()
+    email, password, blog_url, user_agent = load_config()
 
     post_id = args.id
     edit_url = f"{blog_url}/dashboard/posts/{post_id}/"
@@ -405,79 +442,9 @@ def extract_header_content(header_div):
     return "\n".join(lines)
 
 
-# # -----------------------------
-# # UNPUBLISH POST
-# # -----------------------------
-# def cmd_unpublish(args):
-#     session = get_session()
-#     email, password, blog_url = load_config()
-
-#     post_id = args.id
-#     edit_url = f"{blog_url}/dashboard/posts/{post_id}/"
-
-#     # 1) Load edit page
-#     r = session.get(edit_url)
-#     soup = BeautifulSoup(r.text, "html.parser")
-
-#     csrf_input = soup.find("input", {"name": "csrfmiddlewaretoken"})
-#     if not csrf_input:
-#         print(r.text)
-#         raise RuntimeError("Could not find CSRF token on edit page")
-
-#     csrf = csrf_input["value"]
-
-#     # Extract header_content from the hidden input
-#     header_input = soup.find("input", {"name": "header_content"})
-#     if not header_input:
-#         print(r.text)
-#         raise RuntimeError("Could not find hidden header_content input")
-
-#     header_content = header_input.get("value", "").strip()
-
-#     # Extract header_content from the editable DIV
-#     header_div = soup.find("div", {"id": "header_content"})
-#     if not header_div:
-#         print(r.text)
-#         raise RuntimeError("Could not find header_content DIV on edit page")
-
-#     raw_header = header_div.get_text("\n")
-#     header_content = normalize_header_block(raw_header)
-
-#     # Extract body_content
-#     body_textarea = soup.find("textarea", {"name": "body_content"})
-#     if not body_textarea:
-#         print(r.text)
-#         raise RuntimeError("Could not find body_content on edit page")
-
-#     body_content = body_textarea.text.lstrip("\ufeff")
-
-#     # 2) Build payload (publish = false)
-#     payload = {
-#         "csrfmiddlewaretoken": csrf,
-#         "publish": "false",
-#         "header_content": header_content,
-#         "body_content": body_content,
-#     }
-#     print(payload)
-#     headers = {
-#         "Referer": edit_url
-#     }
-
-#     # 3) POST back to edit URL
-#     r = session.post(edit_url, data=payload, headers=headers)
-
-#     if r.status_code != 200:
-#         print(r.text)
-#         raise RuntimeError(f"Unpublish failed (status {r.status_code})")
-
-#     print(json.dumps({
-#         "status": "unpublished",
-#         "id": post_id
-#     }, indent=2))
-
 def cmd_load(args):
     session = get_session()
-    email, password, blog_url = load_config()
+    email, password, blog_url, user_agent = load_config()
 
     edit_url = f"{blog_url}/dashboard/posts/{args.id}/"
     r = session.get(edit_url)
@@ -538,8 +505,7 @@ def main():
         "new",
         help="Create a new post from a markdown file."
     )
-    p_new.add_argument("title", help="Title of the new post.")
-    p_new.add_argument("--file", required=True, help="Path to the markdown file.")
+    p_new.add_argument("--file", required=True, help="Path to the markdown file (must have YAML frontmatter).")
     p_new.set_defaults(func=cmd_new)
 
     # load
