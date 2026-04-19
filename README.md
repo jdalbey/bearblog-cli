@@ -2,7 +2,7 @@
 
 A simple (unofficial) command-line interface for managing your BearBlog posts. Create, list, and delete posts without needing the web dashboard.
 
-> **Note:** This tool works with the free BearBlog plan.
+> **Note:** This tool is for my personal use, and only works because I obtained special approval with BearBlog adminstrator.  This approval is temporary and may be revoked at any time.
 
 ## Features
 
